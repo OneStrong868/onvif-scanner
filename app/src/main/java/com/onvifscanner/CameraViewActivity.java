@@ -1,5 +1,6 @@
 package com.onvifscanner;
 
+import android.net.Uri;
 import android.os.Bundle;
 import android.view.View;
 import android.view.WindowManager;
@@ -12,8 +13,10 @@ import androidx.media3.common.MediaItem;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
 import androidx.media3.common.util.UnstableApi;
+import androidx.media3.datasource.DefaultDataSource;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.rtsp.RtspMediaSource;
+import androidx.media3.exoplayer.source.MediaSource;
 import androidx.media3.ui.PlayerView;
 
 import com.onvifscanner.camera.OnvifCamera;
@@ -100,13 +103,14 @@ public class CameraViewActivity extends AppCompatActivity {
         String rtspUrl = buildRtspUrl();
         
         try {
-            RtspMediaSource.Factory rtspFactory = new RtspMediaSource.Factory();
             MediaItem mediaItem = MediaItem.fromUri(rtspUrl);
-            androidx.media3.common.MediaSource mediaSource = rtspFactory.createMediaSource(mediaItem);
+            RtspMediaSource.Factory rtspFactory = new RtspMediaSource.Factory();
+            MediaSource mediaSource = rtspFactory.createMediaSource(mediaItem);
             
             player.setMediaSource(mediaSource);
             player.prepare();
             player.setPlayWhenReady(true);
+            
         } catch (Exception e) {
             tvError.setVisibility(View.VISIBLE);
             tvError.setText("Failed to start stream: " + e.getMessage());
@@ -117,6 +121,7 @@ public class CameraViewActivity extends AppCompatActivity {
     private String buildRtspUrl() {
         String url = camera.getRtspUrl();
         
+        // If credentials exist, inject them into RTSP URL
         if (!camera.getUsername().isEmpty() && !camera.getPassword().isEmpty()) {
             if (url.startsWith("rtsp://")) {
                 url = "rtsp://" + camera.getUsername() + ":" + camera.getPassword() + 
