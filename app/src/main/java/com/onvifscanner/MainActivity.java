@@ -39,6 +39,7 @@ public class MainActivity extends AppCompatActivity implements CameraAdapter.OnC
     
     private CameraManager cameraManager;
     private NetworkScanner networkScanner;
+    private int scanCount = 0;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -99,17 +100,17 @@ public class MainActivity extends AppCompatActivity implements CameraAdapter.OnC
     private void startNetworkScan() {
         progressBar.setVisibility(View.VISIBLE);
         emptyView.setVisibility(View.GONE);
+        scanCount = 0;
 
         networkScanner.scanForOnvifCameras(new NetworkScanner.ScanCallback() {
             @Override
             public void onCameraFound(OnvifCamera camera) {
                 runOnUiThread(() -> {
-                    if (!cameraManager.cameraExists(camera)) {
-                        cameraManager.addCamera(camera);
-                        updateCameraList(cameraManager.getCameras());
-                        Toast.makeText(MainActivity.this, 
-                            "Found: " + camera.getName(), Toast.LENGTH_SHORT).show();
-                    }
+                    scanCount++;
+                    cameraManager.addCamera(camera);
+                    updateCameraList(cameraManager.getCameras());
+                    Toast.makeText(MainActivity.this, 
+                        "Found: " + camera.getName(), Toast.LENGTH_SHORT).show();
                 });
             }
 
@@ -117,15 +118,20 @@ public class MainActivity extends AppCompatActivity implements CameraAdapter.OnC
             public void onScanComplete(List<OnvifCamera> cameras) {
                 runOnUiThread(() -> {
                     progressBar.setVisibility(View.GONE);
+                    
+                    // Refresh from saved cameras
                     List<OnvifCamera> savedCameras = cameraManager.getCameras();
+                    updateCameraList(savedCameras);
+                    
                     if (savedCameras.isEmpty()) {
                         emptyView.setVisibility(View.VISIBLE);
                         Toast.makeText(MainActivity.this, 
-                            "No ONVIF cameras found", Toast.LENGTH_SHORT).show();
+                            "No ONVIF cameras found.\nTry 'Add Manual' with your RTSP URL.", 
+                            Toast.LENGTH_LONG).show();
                     } else {
-                        emptyView.setVisibility(View.GONE);
                         Toast.makeText(MainActivity.this, 
-                            "Found " + savedCameras.size() + " camera(s)", Toast.LENGTH_SHORT).show();
+                            "Scan complete. " + savedCameras.size() + " camera(s) saved.", 
+                            Toast.LENGTH_SHORT).show();
                     }
                 });
             }
@@ -134,8 +140,13 @@ public class MainActivity extends AppCompatActivity implements CameraAdapter.OnC
             public void onError(String error) {
                 runOnUiThread(() -> {
                     progressBar.setVisibility(View.GONE);
-                    emptyView.setVisibility(View.VISIBLE);
-                    Toast.makeText(MainActivity.this, error, Toast.LENGTH_LONG).show();
+                    List<OnvifCamera> savedCameras = cameraManager.getCameras();
+                    if (savedCameras.isEmpty()) {
+                        emptyView.setVisibility(View.VISIBLE);
+                    }
+                    Toast.makeText(MainActivity.this, 
+                        "Scan error: " + error + "\nTry 'Add Manual' instead.", 
+                        Toast.LENGTH_LONG).show();
                 });
             }
         });
@@ -174,7 +185,7 @@ public class MainActivity extends AppCompatActivity implements CameraAdapter.OnC
 
                 cameraManager.addCamera(camera);
                 updateCameraList(cameraManager.getCameras());
-                Toast.makeText(this, "Camera added", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Camera added: " + name, Toast.LENGTH_SHORT).show();
             })
             .setNegativeButton("Cancel", null)
             .show();
@@ -183,7 +194,6 @@ public class MainActivity extends AppCompatActivity implements CameraAdapter.OnC
     private void updateCameraList(List<OnvifCamera> cameras) {
         adapter.updateCameras(cameras);
         
-        // Properly toggle visibility
         if (cameras == null || cameras.isEmpty()) {
             emptyView.setVisibility(View.VISIBLE);
             recyclerView.setVisibility(View.GONE);
@@ -196,7 +206,7 @@ public class MainActivity extends AppCompatActivity implements CameraAdapter.OnC
     @Override
     public void onCameraClick(OnvifCamera camera) {
         if (camera.getRtspUrl() == null || camera.getRtspUrl().isEmpty()) {
-            Toast.makeText(this, "No RTSP URL available for this camera", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "No RTSP URL available", Toast.LENGTH_SHORT).show();
             return;
         }
         
