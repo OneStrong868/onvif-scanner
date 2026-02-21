@@ -10,6 +10,7 @@ import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ProgressBar;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
@@ -34,7 +35,7 @@ public class MainActivity extends AppCompatActivity implements CameraAdapter.OnC
     private RecyclerView recyclerView;
     private CameraAdapter adapter;
     private ProgressBar progressBar;
-    private View emptyView;
+    private TextView emptyView;
     
     private CameraManager cameraManager;
     private NetworkScanner networkScanner;
@@ -106,6 +107,8 @@ public class MainActivity extends AppCompatActivity implements CameraAdapter.OnC
                     if (!cameraManager.cameraExists(camera)) {
                         cameraManager.addCamera(camera);
                         updateCameraList(cameraManager.getCameras());
+                        Toast.makeText(MainActivity.this, 
+                            "Found: " + camera.getName(), Toast.LENGTH_SHORT).show();
                     }
                 });
             }
@@ -114,13 +117,15 @@ public class MainActivity extends AppCompatActivity implements CameraAdapter.OnC
             public void onScanComplete(List<OnvifCamera> cameras) {
                 runOnUiThread(() -> {
                     progressBar.setVisibility(View.GONE);
-                    if (cameras.isEmpty()) {
+                    List<OnvifCamera> savedCameras = cameraManager.getCameras();
+                    if (savedCameras.isEmpty()) {
                         emptyView.setVisibility(View.VISIBLE);
                         Toast.makeText(MainActivity.this, 
                             "No ONVIF cameras found", Toast.LENGTH_SHORT).show();
                     } else {
+                        emptyView.setVisibility(View.GONE);
                         Toast.makeText(MainActivity.this, 
-                            "Found " + cameras.size() + " camera(s)", Toast.LENGTH_SHORT).show();
+                            "Found " + savedCameras.size() + " camera(s)", Toast.LENGTH_SHORT).show();
                     }
                 });
             }
@@ -129,6 +134,7 @@ public class MainActivity extends AppCompatActivity implements CameraAdapter.OnC
             public void onError(String error) {
                 runOnUiThread(() -> {
                     progressBar.setVisibility(View.GONE);
+                    emptyView.setVisibility(View.VISIBLE);
                     Toast.makeText(MainActivity.this, error, Toast.LENGTH_LONG).show();
                 });
             }
@@ -176,11 +182,24 @@ public class MainActivity extends AppCompatActivity implements CameraAdapter.OnC
 
     private void updateCameraList(List<OnvifCamera> cameras) {
         adapter.updateCameras(cameras);
-        emptyView.setVisibility(cameras.isEmpty() ? View.VISIBLE : View.GONE);
+        
+        // Properly toggle visibility
+        if (cameras == null || cameras.isEmpty()) {
+            emptyView.setVisibility(View.VISIBLE);
+            recyclerView.setVisibility(View.GONE);
+        } else {
+            emptyView.setVisibility(View.GONE);
+            recyclerView.setVisibility(View.VISIBLE);
+        }
     }
 
     @Override
     public void onCameraClick(OnvifCamera camera) {
+        if (camera.getRtspUrl() == null || camera.getRtspUrl().isEmpty()) {
+            Toast.makeText(this, "No RTSP URL available for this camera", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        
         Intent intent = new Intent(this, CameraViewActivity.class);
         intent.putExtra("camera", camera);
         startActivity(intent);

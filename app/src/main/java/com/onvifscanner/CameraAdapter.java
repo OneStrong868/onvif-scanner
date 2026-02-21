@@ -12,11 +12,12 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.onvifscanner.camera.OnvifCamera;
 
+import java.util.ArrayList;
 import java.util.List;
 
 public class CameraAdapter extends RecyclerView.Adapter<CameraAdapter.ViewHolder> {
 
-    private List<OnvifCamera> cameras;
+    private List<OnvifCamera> cameras = new ArrayList<>();
     private OnCameraClickListener listener;
 
     public interface OnCameraClickListener {
@@ -25,12 +26,12 @@ public class CameraAdapter extends RecyclerView.Adapter<CameraAdapter.ViewHolder
     }
 
     public CameraAdapter(List<OnvifCamera> cameras, OnCameraClickListener listener) {
-        this.cameras = cameras;
+        this.cameras = cameras != null ? cameras : new ArrayList<>();
         this.listener = listener;
     }
 
-    public void updateCameras(List<OnvifCamera> cameras) {
-        this.cameras = cameras;
+    public void updateCameras(List<OnvifCamera> newCameras) {
+        this.cameras = newCameras != null ? new ArrayList<>(newCameras) : new ArrayList<>();
         notifyDataSetChanged();
     }
 
@@ -46,9 +47,9 @@ public class CameraAdapter extends RecyclerView.Adapter<CameraAdapter.ViewHolder
     public void onBindViewHolder(@NonNull ViewHolder holder, int position) {
         OnvifCamera camera = cameras.get(position);
         
-        holder.tvName.setText(camera.getName());
-        holder.tvIp.setText(camera.getIpAddress() != null ? camera.getIpAddress() : "Manual");
-        holder.tvRtsp.setText(camera.getRtspUrl());
+        holder.tvName.setText(camera.getName() != null ? camera.getName() : "Unknown Camera");
+        holder.tvIp.setText(camera.getIpAddress() != null ? camera.getIpAddress() : "Manual Entry");
+        holder.tvRtsp.setText(camera.getRtspUrl() != null ? camera.getRtspUrl() : "");
         
         holder.ivType.setImageResource(
             camera.isManual() ? R.drawable.ic_camera_manual : R.drawable.ic_camera_onvif
@@ -69,7 +70,7 @@ public class CameraAdapter extends RecyclerView.Adapter<CameraAdapter.ViewHolder
 
     @Override
     public int getItemCount() {
-        return cameras.size();
+        return cameras != null ? cameras.size() : 0;
     }
 
     static class ViewHolder extends RecyclerView.ViewHolder {
