@@ -6,16 +6,11 @@ import android.view.View;
 import android.view.WindowManager;
 import android.widget.ProgressBar;
 import android.widget.TextView;
-import android.widget.Toast;
 
-import androidx.annotation.OptIn;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.PlaybackException;
-import androidx.media3.common.Player;
-import androidx.media3.common.util.UnstableApi;
 import androidx.media3.exoplayer.ExoPlayer;
-import androidx.media3.exoplayer.rtsp.RtspMediaSource;
 import androidx.media3.ui.PlayerView;
 
 import com.onvifscanner.camera.OnvifCamera;
@@ -62,39 +57,15 @@ public class CameraViewActivity extends AppCompatActivity {
         findViewById(R.id.btnClose).setOnClickListener(v -> finish());
     }
 
-    @OptIn(markerClass = UnstableApi.class)
     private void setupPlayer() {
         player = new ExoPlayer.Builder(this).build();
         playerView.setPlayer(player);
         
-        player.addListener(new Player.Listener() {
-            @Override
-            public void onPlaybackStateChanged(int playbackState) {
-                runOnUiThread(() -> {
-                    if (playbackState == Player.STATE_BUFFERING) {
-                        progressBar.setVisibility(View.VISIBLE);
-                        tvError.setVisibility(View.GONE);
-                    } else if (playbackState == Player.STATE_READY) {
-                        progressBar.setVisibility(View.GONE);
-                        tvError.setVisibility(View.GONE);
-                    } else if (playbackState == Player.STATE_ENDED) {
-                        progressBar.setVisibility(View.GONE);
-                    }
-                });
-            }
-
-            @Override
-            public void onPlayerError(PlaybackException error) {
-                runOnUiThread(() -> {
-                    progressBar.setVisibility(View.GONE);
-                    tvError.setVisibility(View.VISIBLE);
-                    tvError.setText("Connection failed: " + getErrorMessage(error));
-                });
-            }
+        player.addListener(new android.media.session.MediaController.Callback() {
+            // Simplified listener
         });
     }
 
-    @OptIn(markerClass = UnstableApi.class)
     private void startStream() {
         progressBar.setVisibility(View.VISIBLE);
         tvError.setVisibility(View.GONE);
@@ -102,24 +73,45 @@ public class CameraViewActivity extends AppCompatActivity {
         String rtspUrl = buildRtspUrl();
         
         try {
-            RtspMediaSource.Factory rtspFactory = new RtspMediaSource.Factory();
-            MediaItem mediaItem = new MediaItem.fromUri(rtspUrl);
-            androidx.media3.common.MediaSource mediaSource = rtspFactory.createMediaSource(mediaItem);
+            MediaItem mediaItem = new MediaItem.Builder()
+                .setUri(Uri.parse(rtspUrl))
+                .build();
             
-            player.setMediaSource(mediaSource);
+            player.setMediaItem(mediaItem);
             player.prepare();
             player.playWhenReady = true;
+            
+            player.addListener(new androidx.media3.common.Player.Listener() {
+                @Override
+                public void onPlaybackStateChanged(int state) {
+                    runOnUiThread(() -> {
+                        if (state == ExoPlayer.STATE_READY) {
+                            progressBar.setVisibility(View.GONE);
+                        } else if (state == ExoPlayer.STATE_BUFFERING) {
+                            progressBar.setVisibility(View.VISIBLE);
+                        }
+                    });
+                }
+                
+                @Override
+                public void onPlayerError(PlaybackException error) {
+                    runOnUiThread(() -> {
+                        progressBar.setVisibility(View.GONE);
+                        tvError.setVisibility(View.VISIBLE);
+                        tvError.setText("Connection failed: " + error.getMessage());
+                    });
+                }
+            });
         } catch (Exception e) {
-            tvError.setVisibility(View.VISIBLE);
-            tvError.setText("Failed to start stream: " + e.getMessage());
             progressBar.setVisibility(View.GONE);
+            tvError.setVisibility(View.VISIBLE);
+            tvError.setText("Error: " + e.getMessage());
         }
     }
 
     private String buildRtspUrl() {
         String url = camera.getRtspUrl();
         
-        // If credentials exist, inject them into RTSP URL
         if (!camera.getUsername().isEmpty() && !camera.getPassword().isEmpty()) {
             if (url.startsWith("rtsp://")) {
                 url = "rtsp://" + camera.getUsername() + ":" + camera.getPassword() + 
@@ -128,15 +120,6 @@ public class CameraViewActivity extends AppCompatActivity {
         }
         
         return url;
-    }
-
-    private String getErrorMessage(PlaybackException error) {
-        if (error == null) return "Unknown error";
-        String msg = error.getMessage();
-        if (msg == null) return "Connection failed";
-        if (msg.contains("401")) return "Authentication failed. Check credentials.";
-        if (msg.contains("timeout")) return "Connection timeout. Check network.";
-        return msg.substring(0, Math.min(msg.length(), 50));
     }
 
     @Override

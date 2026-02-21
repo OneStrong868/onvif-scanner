@@ -8,14 +8,8 @@ import android.util.Log;
 
 import com.onvifscanner.camera.OnvifCamera;
 
-import org.w3c.dom.Document;
-import org.w3c.dom.Element;
-
 import java.io.BufferedReader;
-import java.io.ByteArrayOutputStream;
-import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.io.OutputStream;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.HttpURLConnection;
@@ -30,12 +24,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-import javax.xml.parsers.DocumentBuilder;
-import javax.xml.parsers.DocumentBuilderFactory;
-
 public class NetworkScanner {
     private static final String TAG = "NetworkScanner";
-    private static final int ONVIF_PORT = 80;
     private static final int WS_DISCOVERY_PORT = 3702;
     private static final String WS_DISCOVERY_MULTICAST = "239.255.255.250";
     
@@ -49,7 +39,7 @@ public class NetworkScanner {
         "<a:ReplyTo>\n" +
         "<a:Address>http://schemas.xmlsoap.org/ws/2004/08/addressing/role/anonymous</a:Address>\n" +
         "</a:ReplyTo>\n" +
-        "<a:To s:mustUnderstand=\"1\">urn:schemas-xmlsoap-org:ws:2005:04:discovery</a:To>\n" +
+        "<a:To s:mustUnderstand=\"1\">urn:schemas-xmlsoap-org:ws:2005/04:discovery</a:To>\n" +
         "</s:Header>\n" +
         "<s:Body>\n" +
         "<Probe xmlns=\"http://schemas.xmlsoap.org/ws/2005/04/discovery\">\n" +
@@ -94,7 +84,15 @@ public class NetworkScanner {
                 // Method 2: IP range scan
                 List<OnvifCamera> ipCameras = ipRangeScan();
                 for (OnvifCamera cam : ipCameras) {
-                    if (!foundCameras.contains(cam)) {
+                    boolean exists = false;
+                    for (OnvifCamera existing : foundCameras) {
+                        if (existing.getIpAddress() != null && 
+                            existing.getIpAddress().equals(cam.getIpAddress())) {
+                            exists = true;
+                            break;
+                        }
+                    }
+                    if (!exists) {
                         foundCameras.add(cam);
                     }
                 }
@@ -122,7 +120,7 @@ public class NetworkScanner {
             socket.setSoTimeout(5000);
             
             InetAddress group = InetAddress.getByName(WS_DISCOVERY_MULTICAST);
-            socket.joinGroup(group);
+            socket.joinGroup(new InetSocketAddress(group, WS_DISCOVERY_PORT), null);
 
             // Send probe
             String probe = String.format(WS_DISCOVERY_PROBE, java.util.UUID.randomUUID().toString());
@@ -143,15 +141,23 @@ public class NetworkScanner {
                     String responseStr = new String(response.getData(), 0, response.getLength());
                     OnvifCamera camera = parseWsDiscoveryResponse(responseStr);
                     
-                    if (camera != null && !cameras.contains(camera)) {
-                        cameras.add(camera);
+                    if (camera != null) {
+                        boolean exists = false;
+                        for (OnvifCamera c : cameras) {
+                            if (c.getIpAddress() != null && 
+                                c.getIpAddress().equals(camera.getIpAddress())) {
+                                exists = true;
+                                break;
+                            }
+                        }
+                        if (!exists) {
+                            cameras.add(camera);
+                        }
                     }
                 } catch (SocketTimeoutException e) {
                     break;
                 }
             }
-            
-            socket.leaveGroup(group);
         }
         
         return cameras;
@@ -159,34 +165,31 @@ public class NetworkScanner {
 
     private OnvifCamera parseWsDiscoveryResponse(String response) {
         try {
-            // Look for XAddrs (device service URL)
             if (!response.contains("XAddrs") && !response.contains("onvif")) {
                 return null;
             }
 
-            // Extract XAddr
             String xaddr = extractValue(response, "<d:XAddrs>", "</d:XAddrs>");
             if (xaddr == null) {
                 xaddr = extractValue(response, "<wsdd:XAddrs>", "</wsdd:XAddrs>");
             }
+            if (xaddr == null) {
+                xaddr = extractValue(response, "<XAddrs>", "</XAddrs>");
+            }
 
-            if (xaddr != null && xaddr.contains("onvif")) {
+            if (xaddr != null && xaddr.contains("http")) {
                 OnvifCamera camera = new OnvifCamera();
                 
-                // Parse URL
-                URL url = new URL(xaddr.trim());
+                xaddr = xaddr.trim();
+                if (xaddr.contains(" ")) {
+                    xaddr = xaddr.split(" ")[0];
+                }
+                
+                URL url = new URL(xaddr);
                 camera.setIpAddress(url.getHost());
                 camera.setPort(url.getPort() > 0 ? url.getPort() : 80);
                 camera.setName("ONVIF Camera @ " + url.getHost());
-                
-                // Try to get RTSP URL
-                String rtspUrl = getRtspUrl(xaddr.trim());
-                if (rtspUrl != null) {
-                    camera.setRtspUrl(rtspUrl);
-                } else {
-                    // Default RTSP path
-                    camera.setRtspUrl("rtsp://" + url.getHost() + ":554/stream1");
-                }
+                camera.setRtspUrl("rtsp://" + url.getHost() + ":554/stream1");
                 
                 return camera;
             }
@@ -199,12 +202,11 @@ public class NetworkScanner {
     private List<OnvifCamera> ipRangeScan() throws Exception {
         List<OnvifCamera> cameras = new ArrayList<>();
         
-        // Get current subnet
         String subnet = getSubnet();
         if (subnet == null) return cameras;
 
-        // Scan common camera ports on subnet
         ExecutorService scanExecutor = Executors.newFixedThreadPool(20);
+        List<OnvifCamera> syncCameras = new ArrayList<>();
         
         for (int i = 1; i < 255; i++) {
             final String ip = subnet + "." + i;
@@ -216,8 +218,8 @@ public class NetworkScanner {
                     camera.setName("ONVIF Camera @ " + ip);
                     camera.setRtspUrl("rtsp://" + ip + ":554/stream1");
                     
-                    synchronized (cameras) {
-                        cameras.add(camera);
+                    synchronized (syncCameras) {
+                        syncCameras.add(camera);
                     }
                 }
             });
@@ -226,6 +228,7 @@ public class NetworkScanner {
         scanExecutor.shutdown();
         scanExecutor.awaitTermination(30, TimeUnit.SECONDS);
         
+        cameras.addAll(syncCameras);
         return cameras;
     }
 
@@ -246,70 +249,16 @@ public class NetworkScanner {
         }
     }
 
-    private String getRtspUrl(String deviceServiceUrl) {
-        try {
-            // ONVIF GetStreamUri request
-            String soapRequest = 
-                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
-                "<s:Envelope xmlns:s=\"http://www.w3.org/2003/05/soap-envelope\"\n" +
-                "xmlns:trt=\"http://www.onvif.org/ver10/media/wsdl\">\n" +
-                "<s:Body>\n" +
-                "<trt:GetStreamUri>\n" +
-                "<trt:StreamSetup>\n" +
-                "<tt:Stream xmlns:tt=\"http://www.onvif.org/ver10/schema\">RTP-Unicast</tt:Stream>\n" +
-                "<tt:Transport xmlns:tt=\"http://www.onvif.org/ver10/schema\">\n" +
-                "<tt:Protocol>RTSP</tt:Protocol>\n" +
-                "</tt:Transport>\n" +
-                "</trt:StreamSetup>\n" +
-                "<trt:ProfileToken>profile_1</trt:ProfileToken>\n" +
-                "</trt:GetStreamUri>\n" +
-                "</s:Body>\n" +
-                "</s:Envelope>";
-
-            URL url = new URL(deviceServiceUrl);
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-            conn.setRequestMethod("POST");
-            conn.setRequestProperty("Content-Type", "application/soap+xml");
-            conn.setDoOutput(true);
-            conn.setConnectTimeout(3000);
-            conn.setReadTimeout(3000);
-
-            OutputStream os = conn.getOutputStream();
-            os.write(soapRequest.getBytes());
-            os.flush();
-
-            if (conn.getResponseCode() == 200) {
-                BufferedReader br = new BufferedReader(
-                    new InputStreamReader(conn.getInputStream()));
-                StringBuilder response = new StringBuilder();
-                String line;
-                while ((line = br.readLine()) != null) {
-                    response.append(line);
-                }
-                br.close();
-                
-                // Extract RTSP URI
-                String rtsp = extractValue(response.toString(), "<tt:Uri>", "</tt:Uri>");
-                return rtsp;
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Error getting RTSP URL", e);
-        }
-        return null;
-    }
-
     private String getSubnet() {
         try {
             WifiManager wifiManager = (WifiManager) context.getApplicationContext()
                 .getSystemService(Context.WIFI_SERVICE);
             int ipAddress = wifiManager.getConnectionInfo().getIpAddress();
             
-            String ipString = String.format("%d.%d.%d",
+            return String.format("%d.%d.%d",
                 (ipAddress & 0xff),
                 (ipAddress >> 8 & 0xff),
                 (ipAddress >> 16 & 0xff));
-            
-            return ipString;
         } catch (Exception e) {
             return null;
         }
