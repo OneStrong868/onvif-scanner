@@ -1,5 +1,6 @@
 package com.onvifscanner;
 
+import android.net.Uri;
 import android.os.Bundle;
 import android.view.View;
 import android.view.WindowManager;
@@ -7,22 +8,22 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.annotation.OptIn;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.media3.common.MediaItem;
+import androidx.media3.common.PlaybackException;
+import androidx.media3.common.Player;
+import androidx.media3.common.util.UnstableApi;
+import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.exoplayer.rtsp.RtspMediaSource;
+import androidx.media3.ui.PlayerView;
 
 import com.onvifscanner.camera.OnvifCamera;
 
-import org.videolan.libvlc.LibVLC;
-import org.videolan.libvlc.Media;
-import org.videolan.libvlc.MediaPlayer;
-import org.videolan.libvlc.util.VLCVideoLayout;
-
-import java.util.ArrayList;
-
 public class CameraViewActivity extends AppCompatActivity {
 
-    private LibVLC libVLC;
-    private MediaPlayer mediaPlayer;
-    private VLCVideoLayout videoLayout;
+    private ExoPlayer player;
+    private PlayerView playerView;
     private ProgressBar progressBar;
     private TextView tvError;
 
@@ -43,12 +44,12 @@ public class CameraViewActivity extends AppCompatActivity {
         }
 
         initViews();
-        setupVlc();
+        setupPlayer();
         startStream();
     }
 
     private void initViews() {
-        videoLayout = findViewById(R.id.videoLayout);
+        playerView = findViewById(R.id.playerView);
         progressBar = findViewById(R.id.progressBar);
         tvError = findViewById(R.id.tvError);
 
@@ -61,52 +62,58 @@ public class CameraViewActivity extends AppCompatActivity {
         findViewById(R.id.btnClose).setOnClickListener(v -> finish());
     }
 
-    private void setupVlc() {
-        ArrayList<String> options = new ArrayList<>();
-        options.add("--network-caching=300");
-        options.add("--rtsp-tcp");
+    @OptIn(markerClass = UnstableApi.class)
+    private void setupPlayer() {
+        player = new ExoPlayer.Builder(this).build();
+        playerView.setPlayer(player);
         
-        libVLC = new LibVLC(this, options);
-        mediaPlayer = new MediaPlayer(libVLC);
-        mediaPlayer.attachViews(videoLayout, null, false, false);
+        player.addListener(new Player.Listener() {
+            @Override
+            public void onPlaybackStateChanged(int playbackState) {
+                runOnUiThread(() -> {
+                    if (playbackState == Player.STATE_BUFFERING) {
+                        progressBar.setVisibility(View.VISIBLE);
+                        tvError.setVisibility(View.GONE);
+                    } else if (playbackState == Player.STATE_READY) {
+                        progressBar.setVisibility(View.GONE);
+                        tvError.setVisibility(View.GONE);
+                    } else if (playbackState == Player.STATE_ENDED) {
+                        progressBar.setVisibility(View.GONE);
+                    }
+                });
+            }
+
+            @Override
+            public void onPlayerError(PlaybackException error) {
+                runOnUiThread(() -> {
+                    progressBar.setVisibility(View.GONE);
+                    tvError.setVisibility(View.VISIBLE);
+                    tvError.setText("Connection failed: " + getErrorMessage(error));
+                });
+            }
+        });
     }
 
+    @OptIn(markerClass = UnstableApi.class)
     private void startStream() {
         progressBar.setVisibility(View.VISIBLE);
         tvError.setVisibility(View.GONE);
 
         String rtspUrl = buildRtspUrl();
         
-        Media media = new Media(libVLC, rtspUrl);
-        media.addOption(":network-caching=300");
-        media.addOption(":rtsp-tcp");
-        
-        mediaPlayer.setMedia(media);
-        
-        mediaPlayer.setEventListener(event -> {
-            switch (event.type) {
-                case MediaPlayer.Event.Playing:
-                    runOnUiThread(() -> progressBar.setVisibility(View.GONE));
-                    break;
-                case MediaPlayer.Event.EncounteredError:
-                    runOnUiThread(() -> {
-                        progressBar.setVisibility(View.GONE);
-                        tvError.setVisibility(View.VISIBLE);
-                        tvError.setText("Connection failed. Check credentials and URL.");
-                    });
-                    break;
-                case MediaPlayer.Event.Buffering:
-                    runOnUiThread(() -> {
-                        float buffering = event.getBuffering();
-                        if (buffering < 100) {
-                            progressBar.setVisibility(View.VISIBLE);
-                        }
-                    });
-                    break;
-            }
-        });
-
-        mediaPlayer.play();
+        try {
+            RtspMediaSource.Factory rtspFactory = new RtspMediaSource.Factory();
+            MediaItem mediaItem = new MediaItem.fromUri(rtspUrl);
+            androidx.media3.common.MediaSource mediaSource = rtspFactory.createMediaSource(mediaItem);
+            
+            player.setMediaSource(mediaSource);
+            player.prepare();
+            player.playWhenReady = true;
+        } catch (Exception e) {
+            tvError.setVisibility(View.VISIBLE);
+            tvError.setText("Failed to start stream: " + e.getMessage());
+            progressBar.setVisibility(View.GONE);
+        }
     }
 
     private String buildRtspUrl() {
@@ -123,22 +130,28 @@ public class CameraViewActivity extends AppCompatActivity {
         return url;
     }
 
+    private String getErrorMessage(PlaybackException error) {
+        if (error == null) return "Unknown error";
+        String msg = error.getMessage();
+        if (msg == null) return "Connection failed";
+        if (msg.contains("401")) return "Authentication failed. Check credentials.";
+        if (msg.contains("timeout")) return "Connection timeout. Check network.";
+        return msg.substring(0, Math.min(msg.length(), 50));
+    }
+
     @Override
     protected void onStop() {
         super.onStop();
-        if (mediaPlayer != null) {
-            mediaPlayer.stop();
+        if (player != null) {
+            player.stop();
         }
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        if (mediaPlayer != null) {
-            mediaPlayer.release();
-        }
-        if (libVLC != null) {
-            libVLC.release();
+        if (player != null) {
+            player.release();
         }
     }
 }

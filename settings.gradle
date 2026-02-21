@@ -11,6 +11,7 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        maven { url 'https://download.videolan.org/pub/videolan/vlc/bindings/android/' }
     }
 }
 
