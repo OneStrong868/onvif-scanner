@@ -79,7 +79,7 @@ public class CameraViewActivity extends AppCompatActivity {
             
             player.setMediaItem(mediaItem);
             player.prepare();
-            player.playWhenReady = true;
+            player.setPlayWhenReady(true);
             
             player.addListener(new androidx.media3.common.Player.Listener() {
                 @Override
